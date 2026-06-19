@@ -310,3 +310,16 @@ dist
 cypress/videos
 cypress/screenshots
 .vscode/settings.json
+
+# --- lealvona deploy safety: never commit data, secrets, or backups ---
+# (these were NOT ignored and a `git add -A` would have leaked the DB + secret key)
+.webui_secret_key
+/backups/
+/data/
+webui.db
+webui.db-*
+webui.db.bak.*
+*.sqlite
+open_webui_data*.zip
+*.LANDMINE-*
+backend/open_webui/data/_swapped-empty-*/

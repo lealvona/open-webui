@@ -616,7 +616,7 @@ export const getBanners = async (token: string): Promise<Banner[]> => {
 		throw error;
 	}
 
-	return res;
+	return res ?? [];
 };
 
 export const setBanners = async (token: string, banners: Banner[]) => {

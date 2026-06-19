@@ -2567,9 +2567,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 form_data = await chat_memory_handler(request, form_data, extra_params, user)
 
         if 'web_search' in features and features['web_search']:
-            # Skip forced RAG web search when native FC is enabled - model can use web_search tool
-            if metadata.get('params', {}).get('function_calling') != 'native':
-                form_data = await chat_web_search_handler(request, form_data, extra_params, user)
+            # PATCH (lealvona, 2026-05-13): always run forced web-search injection
+            # when the user toggles the globe icon, even with native function-calling.
+            # Stock behavior skipped this for native-FC and relied on the model
+            # calling the snippet-only `search_web` tool, which produced shallow
+            # results because the model rarely chained `fetch_url` afterward.
+            form_data = await chat_web_search_handler(request, form_data, extra_params, user)
 
         if 'image_generation' in features and features['image_generation']:
             # Skip forced image generation when native FC is enabled - model can use generate_image tool
@@ -4472,6 +4475,27 @@ async def streaming_chat_response_handler(response, ctx):
                                     reasoning_item['ended_at'] - reasoning_item['started_at']
                                 )
                                 reasoning_item['status'] = 'completed'
+
+                        # Work-around for vLLM Qwen3 bug: when --reasoning-parser qwen3
+                        # is enabled, streaming mode sends *all* tokens via
+                        # delta.reasoning even if thinking is disabled. If the output
+                        # ends up containing only reasoning items, convert them to a
+                        # regular message so the response isn't invisible.
+                        if output and all(item.get('type') == 'reasoning' for item in output):
+                            combined_text = ''.join(
+                                part.get('text', '')
+                                for item in output
+                                for part in item.get('content', [])
+                            )
+                            output = [
+                                {
+                                    'type': 'message',
+                                    'id': output_id('msg'),
+                                    'status': 'completed',
+                                    'role': 'assistant',
+                                    'content': [{'type': 'output_text', 'text': combined_text}],
+                                }
+                            ]
 
                     if response_tool_calls:
                         tool_calls.append(_split_tool_calls(response_tool_calls))

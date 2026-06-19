@@ -514,12 +514,17 @@ class PgvectorClient(VectorDBBase):
                 documents[qid].append(row.text)
                 metadatas[qid].append(row.vmetadata)
 
-            self.session.rollback()  # read-only transaction
             return SearchResult(ids=ids, distances=distances, documents=documents, metadatas=metadatas)
         except Exception as e:
-            self.session.rollback()
             log.exception(f'Error during search: {e}')
             return None
+        finally:
+            # Read-only transaction — must rollback on every exit path,
+            # including the empty-results early return. Otherwise the
+            # SQLAlchemy session leaks an open transaction and pg leaves
+            # the backend connection in `idle in transaction`, wedging
+            # the worker thread's scoped_session for subsequent queries.
+            self.session.rollback()
 
     def query(self, collection_name: str, filter: Dict[str, Any], limit: Optional[int] = None) -> Optional[GetResult]:
         try:
@@ -558,16 +563,16 @@ class PgvectorClient(VectorDBBase):
             documents = [[result.text for result in results]]
             metadatas = [[result.vmetadata for result in results]]
 
-            self.session.rollback()  # read-only transaction
             return GetResult(
                 ids=ids,
                 documents=documents,
                 metadatas=metadatas,
             )
         except Exception as e:
-            self.session.rollback()
             log.exception(f'Error during query: {e}')
             return None
+        finally:
+            self.session.rollback()  # read-only — see search() for rationale
 
     def get(self, collection_name: str, limit: Optional[int] = None) -> Optional[GetResult]:
         try:
@@ -597,12 +602,12 @@ class PgvectorClient(VectorDBBase):
                 documents = [[result.text for result in results]]
                 metadatas = [[result.vmetadata for result in results]]
 
-            self.session.rollback()  # read-only transaction
             return GetResult(ids=ids, documents=documents, metadatas=metadatas)
         except Exception as e:
-            self.session.rollback()
             log.exception(f'Error during get: {e}')
             return None
+        finally:
+            self.session.rollback()  # read-only — see search() for rationale
 
     def delete(
         self,
@@ -658,12 +663,12 @@ class PgvectorClient(VectorDBBase):
                 self.session.query(DocumentChunk).filter(DocumentChunk.collection_name == collection_name).first()
                 is not None
             )
-            self.session.rollback()  # read-only transaction
             return exists
         except Exception as e:
-            self.session.rollback()
             log.exception(f'Error checking collection existence: {e}')
             return False
+        finally:
+            self.session.rollback()  # read-only — see search() for rationale
 
     def delete_collection(self, collection_name: str) -> None:
         self.delete(collection_name)
