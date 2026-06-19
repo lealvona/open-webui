@@ -5,15 +5,14 @@
 
 	import dayjs from 'dayjs';
 
-	import { settings, chatId, WEBUI_NAME, models } from '$lib/stores';
+	import { settings, chatId, WEBUI_NAME, models, config } from '$lib/stores';
 	import { convertMessagesToHistory, createMessagesList } from '$lib/utils';
 
 	import { getChatByShareId, cloneSharedChatById } from '$lib/apis/chats';
 
 	import Messages from '$lib/components/chat/Messages.svelte';
-	import Navbar from '$lib/components/layout/Navbar.svelte';
 
-	import { getUserById } from '$lib/apis/users';
+	import { getUserInfoById, getUserSettings } from '$lib/apis/users';
 	import { getModels } from '$lib/apis';
 	import { toast } from 'svelte-sonner';
 	import localizedFormat from 'dayjs/plugin/localizedFormat';
@@ -61,7 +60,31 @@
 	//////////////////////////
 
 	const loadSharedChat = async () => {
-		await models.set(await getModels(localStorage.token));
+		const userSettings = await getUserSettings(localStorage.token).catch((error) => {
+			console.error(error);
+			return null;
+		});
+
+		if (userSettings) {
+			settings.set(userSettings.ui);
+		} else {
+			let localStorageSettings = {} as Parameters<(typeof settings)['set']>[0];
+
+			try {
+				localStorageSettings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+			} catch (e: unknown) {
+				console.error('Failed to parse settings from localStorage', e);
+			}
+
+			settings.set(localStorageSettings);
+		}
+
+		await models.set(
+			await getModels(
+				localStorage.token,
+				$config?.features?.enable_direct_connections && ($settings?.directConnections ?? null)
+			)
+		);
 		await chatId.set($page.params.id);
 		chat = await getChatByShareId(localStorage.token, $chatId).catch(async (error) => {
 			await goto('/');
@@ -69,7 +92,7 @@
 		});
 
 		if (chat) {
-			user = await getUserById(localStorage.token, chat.user_id).catch((error) => {
+			user = await getUserInfoById(localStorage.token, chat.user_id).catch((error) => {
 				console.error(error);
 				return null;
 			});
@@ -92,8 +115,8 @@
 				autoScroll = true;
 				await tick();
 
-				if (messages.length > 0) {
-					history.messages[messages.at(-1).id].done = true;
+				if (messages.length > 0 && messages.at(-1)?.id && messages.at(-1)?.id in history.messages) {
+					history.messages[messages.at(-1)?.id].done = true;
 				}
 				await tick();
 
@@ -121,7 +144,7 @@
 <svelte:head>
 	<title>
 		{title
-			? `${title.length > 30 ? `${title.slice(0, 30)}...` : title} | ${$WEBUI_NAME}`
+			? `${title.length > 30 ? `${title.slice(0, 30)}...` : title} • ${$WEBUI_NAME}`
 			: `${$WEBUI_NAME}`}
 	</title>
 </svelte:head>
@@ -132,24 +155,31 @@
 	>
 		<div class="flex flex-col flex-auto justify-center relative">
 			<div class=" flex flex-col w-full flex-auto overflow-auto h-0" id="messages-container">
-				<div class="pt-5 px-2 w-full max-w-5xl mx-auto">
+				<div
+					class="pt-5 px-2 w-full {($settings?.widescreenMode ?? null)
+						? 'max-w-full'
+						: 'max-w-5xl'} mx-auto"
+				>
 					<div class="px-3">
-						<div class=" text-2xl font-semibold line-clamp-1">
+						<h1 class=" text-2xl font-medium line-clamp-1 m-0">
 							{title}
-						</div>
+						</h1>
 
 						<div class="flex text-sm justify-between items-center mt-1">
-							<div class="text-gray-400">
+							<time
+								class="text-gray-400"
+								datetime={new Date(chat?.chat?.timestamp || Date.now()).toISOString()}
+							>
 								{dayjs(chat.chat.timestamp).format('LLL')}
-							</div>
+							</time>
 						</div>
 					</div>
 				</div>
 
-				<div class=" h-full w-full flex flex-col py-2">
-					<div class="">
+				<div class=" h-full w-full flex flex-col py-2" role="main">
+					<div class="w-full">
 						<Messages
-							className="h-full flex pt-4 pb-8"
+							className="h-full flex pt-4 pb-8 "
 							{user}
 							chatId={$chatId}
 							readOnly={true}
@@ -159,7 +189,7 @@
 							bind:messages
 							bind:autoScroll
 							bottomPadding={files.length > 0}
-							sendPrompt={() => {}}
+							sendMessage={() => {}}
 							continueResponse={() => {}}
 							regenerateResponse={() => {}}
 						/>
@@ -168,11 +198,11 @@
 			</div>
 
 			<div
-				class="absolute bottom-0 right-0 left-0 flex justify-center w-full bg-gradient-to-b from-transparent to-white dark:to-gray-900"
+				class="absolute bottom-0 right-0 left-0 flex justify-center w-full bg-linear-to-b from-transparent to-white dark:to-gray-900"
 			>
 				<div class="pb-5">
 					<button
-						class="px-4 py-2 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+						class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
 						on:click={cloneSharedChat}
 					>
 						{$i18n.t('Clone Chat')}

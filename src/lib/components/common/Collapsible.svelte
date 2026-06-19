@@ -1,5 +1,8 @@
 <script lang="ts">
-	import { getContext, createEventDispatcher } from 'svelte';
+	import { decode } from 'html-entities';
+	import { v4 as uuidv4 } from 'uuid';
+
+	import { getContext } from 'svelte';
 	const i18n = getContext('i18n');
 
 	import dayjs from '$lib/dayjs';
@@ -10,6 +13,9 @@
 	dayjs.extend(relativeTime);
 
 	async function loadLocale(locales) {
+		if (!locales || !Array.isArray(locales)) {
+			return;
+		}
 		for (const locale of locales) {
 			try {
 				dayjs.locale(locale);
@@ -23,9 +29,6 @@
 	// Assuming $i18n.languages is an array of language codes
 	$: loadLocale($i18n.languages);
 
-	const dispatch = createEventDispatcher();
-	$: dispatch('change', open);
-
 	import { slide } from 'svelte/transition';
 	import { quintOut } from 'svelte/easing';
 
@@ -34,24 +37,35 @@
 	import Spinner from './Spinner.svelte';
 
 	export let open = false;
+
 	export let className = '';
 	export let buttonClassName =
 		'w-fit text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition';
+
+	export let id = '';
 	export let title = null;
 	export let attributes = null;
 
+	export let chevron = false;
 	export let grow = false;
 
 	export let disabled = false;
+	export let messageDone = false;
 	export let hide = false;
+
+	export let onChange: Function = () => {};
+
+	$: onChange(open);
+
+	const collapsibleId = uuidv4();
 </script>
 
-<div class={className}>
+<div {id} class={className}>
 	{#if title !== null}
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<!-- svelte-ignore a11y-click-events-have-key-events -->
 		<div
-			class="{buttonClassName} cursor-pointer"
+			class="{buttonClassName} {disabled ? '' : 'cursor-pointer'}"
 			on:pointerup={() => {
 				if (!disabled) {
 					open = !open;
@@ -59,13 +73,14 @@
 			}}
 		>
 			<div
-				class=" w-full font-medium flex items-center justify-between gap-2 {attributes?.done &&
-				attributes?.done !== 'true'
+				class=" w-full flex items-center justify-between gap-2 {attributes?.done &&
+				attributes?.done !== 'true' &&
+				!messageDone
 					? 'shimmer'
 					: ''}
 			"
 			>
-				{#if attributes?.done && attributes?.done !== 'true'}
+				{#if attributes?.done && attributes?.done !== 'true' && !messageDone}
 					<div>
 						<Spinner className="size-4" />
 					</div>
@@ -73,15 +88,25 @@
 
 				<div class="">
 					{#if attributes?.type === 'reasoning'}
-						{#if attributes?.done === 'true' && attributes?.duration}
-							{$i18n.t('Thought for {{DURATION}}', {
-								DURATION: dayjs.duration(attributes.duration, 'seconds').humanize()
-							})}
+						{#if (attributes?.done === 'true' || messageDone) && attributes?.duration}
+							{#if attributes.duration < 1}
+								{$i18n.t('Thought for less than a second')}
+							{:else if attributes.duration < 60}
+								{$i18n.t('Thought for {{DURATION}} seconds', {
+									DURATION: attributes.duration
+								})}
+							{:else}
+								{$i18n.t('Thought for {{DURATION}}', {
+									DURATION: dayjs.duration(attributes.duration, 'seconds').humanize()
+								})}
+							{/if}
+						{:else if attributes?.done === 'true' || messageDone}
+							{$i18n.t('Thought')}
 						{:else}
 							{$i18n.t('Thinking...')}
 						{/if}
 					{:else if attributes?.type === 'code_interpreter'}
-						{#if attributes?.done === 'true'}
+						{#if attributes?.done === 'true' || messageDone}
 							{$i18n.t('Analyzed')}
 						{:else}
 							{$i18n.t('Analyzing...')}
@@ -91,13 +116,15 @@
 					{/if}
 				</div>
 
-				<div class="flex self-center translate-y-[1px]">
-					{#if open}
-						<ChevronUp strokeWidth="3.5" className="size-3.5" />
-					{:else}
-						<ChevronDown strokeWidth="3.5" className="size-3.5" />
-					{/if}
-				</div>
+				{#if !disabled}
+					<div class="flex self-center translate-y-[1px]">
+						{#if open}
+							<ChevronUp strokeWidth="3.5" className="size-3.5" />
+						{:else}
+							<ChevronDown strokeWidth="3.5" className="size-3.5" />
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 	{:else}
@@ -105,14 +132,29 @@
 		<!-- svelte-ignore a11y-click-events-have-key-events -->
 		<div
 			class="{buttonClassName} cursor-pointer"
-			on:pointerup={() => {
+			on:click={(e) => {
+				e.stopPropagation();
+			}}
+			on:pointerup={(e) => {
 				if (!disabled) {
 					open = !open;
 				}
 			}}
 		>
 			<div>
-				<slot />
+				<div class="flex items-start justify-between">
+					<slot />
+
+					{#if chevron}
+						<div class="flex self-start translate-y-1">
+							{#if open}
+								<ChevronUp strokeWidth="3.5" className="size-3.5" />
+							{:else}
+								<ChevronDown strokeWidth="3.5" className="size-3.5" />
+							{/if}
+						</div>
+					{/if}
+				</div>
 
 				{#if grow}
 					{#if open && !hide}

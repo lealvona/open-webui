@@ -1,50 +1,66 @@
-import logging
-from typing import Optional
+from __future__ import annotations
 
-import requests
+import logging
+
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
-from open_webui.env import SRC_LOG_LEVELS
+from open_webui.utils.session_pool import get_session
 
 log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["RAG"])
 
 
-def search_google_pse(
+async def search_google_pse(
     api_key: str,
     search_engine_id: str,
     query: str,
     count: int,
-    filter_list: Optional[list[str]] = None,
+    filter_list: list[str | None] | None = None,
+    referer: str | None = None,
 ) -> list[SearchResult]:
-    """Search using Google's Programmable Search Engine API and return the results as a list of SearchResult objects.
+    """Query Google Programmable Search Engine with automatic pagination.
 
-    Args:
-        api_key (str): A Programmable Search Engine API key
-        search_engine_id (str): A Programmable Search Engine ID
-        query (str): The query to search for
+    The PSE API returns at most 10 results per request, so this function
+    issues multiple requests when ``count > 10``.
     """
-    url = "https://www.googleapis.com/customsearch/v1"
+    url = 'https://www.googleapis.com/customsearch/v1'
+    headers: dict[str, str] = {'Content-Type': 'application/json'}
+    if referer:
+        headers['Referer'] = referer
 
-    headers = {"Content-Type": "application/json"}
-    params = {
-        "cx": search_engine_id,
-        "q": query,
-        "key": api_key,
-        "num": count,
-    }
+    all_items: list[dict] = []
+    start_index = 1  # PSE uses 1-based pagination
 
-    response = requests.request("GET", url, headers=headers, params=params)
-    response.raise_for_status()
+    session = await get_session()
+    remaining = count
+    while remaining > 0:
+        page_size = min(remaining, 10)
+        params = {
+            'cx': search_engine_id,
+            'q': query,
+            'key': api_key,
+            'num': str(page_size),
+            'start': str(start_index),
+        }
 
-    json_response = response.json()
-    results = json_response.get("items", [])
+        async with session.get(url, headers=headers, params=params) as response:
+            response.raise_for_status()
+            payload = await response.json()
+
+        items = payload.get('items', [])
+        if not items:
+            break
+
+        all_items.extend(items)
+        remaining -= len(items)
+        start_index += 10
+
     if filter_list:
-        results = get_filtered_results(results, filter_list)
+        all_items = get_filtered_results(all_items, filter_list)
+
     return [
         SearchResult(
-            link=result["link"],
-            title=result.get("title"),
-            snippet=result.get("snippet"),
+            link=item.get('link', ''),
+            title=item.get('title'),
+            snippet=item.get('snippet'),
         )
-        for result in results
+        for item in all_items
     ]

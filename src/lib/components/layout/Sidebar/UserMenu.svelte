@@ -1,84 +1,294 @@
 <script lang="ts">
-	import { DropdownMenu } from 'bits-ui';
-	import { createEventDispatcher, getContext, onMount } from 'svelte';
+	import { createEventDispatcher, getContext, onMount, tick } from 'svelte';
 
-	import { flyAndScale } from '$lib/utils/transitions';
 	import { goto } from '$app/navigation';
-	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
-	import { showSettings, activeUserIds, USAGE_POOL, mobile, showSidebar } from '$lib/stores';
 	import { fade, slide } from 'svelte/transition';
+
+	import { getUsage } from '$lib/apis';
+	import { getSessionUser, userSignOut } from '$lib/apis/auths';
+
+	import {
+		showSettings,
+		mobile,
+		showSidebar,
+		showShortcuts,
+		user,
+		config,
+		settings
+	} from '$lib/stores';
+
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
+
+	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import { userSignOut } from '$lib/apis/auths';
+	import ArchiveBox from '$lib/components/icons/ArchiveBox.svelte';
+	import QuestionMarkCircle from '$lib/components/icons/QuestionMarkCircle.svelte';
+	import Map from '$lib/components/icons/Map.svelte';
+	import Keyboard from '$lib/components/icons/Keyboard.svelte';
+	import ShortcutsModal from '$lib/components/chat/ShortcutsModal.svelte';
+	import Settings from '$lib/components/icons/Settings.svelte';
+	import Code from '$lib/components/icons/Code.svelte';
+	import UserGroup from '$lib/components/icons/UserGroup.svelte';
+	import SignOut from '$lib/components/icons/SignOut.svelte';
+	import FaceSmile from '$lib/components/icons/FaceSmile.svelte';
+	import UserStatusModal from './UserStatusModal.svelte';
+	import Emoji from '$lib/components/common/Emoji.svelte';
+	import XMark from '$lib/components/icons/XMark.svelte';
+	import Note from '$lib/components/icons/Note.svelte';
+	import Pin from '$lib/components/icons/Pin.svelte';
+	import PinSlash from '$lib/components/icons/PinSlash.svelte';
+	import { updateUserStatus, updateUserSettings } from '$lib/apis/users';
+	import { toast } from 'svelte-sonner';
 
 	const i18n = getContext('i18n');
 
 	export let show = false;
 	export let role = '';
-	export let className = 'max-w-[240px]';
+
+	export let profile = false;
+	export let help = false;
+
+	export let className = 'w-[240px]';
+	export let align = 'end';
+
+	export let showActiveUsers = true;
+
+	let showUserStatusModal = false;
+	let shiftKey = false;
 
 	const dispatch = createEventDispatcher();
+
+	const DEFAULT_PINNED_ITEMS = ['notes', 'workspace'];
+
+	$: pinnedItems = $settings?.pinnedMenuItems ?? DEFAULT_PINNED_ITEMS;
+
+	const isPinned = (id: string) => {
+		return pinnedItems.includes(id);
+	};
+
+	const togglePin = async (id: string) => {
+		let updated;
+		if (isPinned(id)) {
+			updated = pinnedItems.filter((item) => item !== id);
+		} else {
+			updated = [...pinnedItems, id];
+		}
+		await settings.set({ ...$settings, pinnedMenuItems: updated });
+		await updateUserSettings(localStorage.token, { ui: $settings });
+	};
+
+	let usage = null;
+	const getUsageInfo = async () => {
+		const res = await getUsage(localStorage.token).catch((error) => {
+			console.error('Error fetching usage info:', error);
+		});
+
+		if (res) {
+			usage = res;
+		} else {
+			usage = null;
+		}
+	};
+
+	const handleDropdownChange = (state) => {
+		dispatch('change', state);
+
+		// Fetch usage info when dropdown opens, if user has permission
+		if (state && ($config?.features?.enable_public_active_users_count || role === 'admin')) {
+			getUsageInfo();
+		}
+	};
 </script>
 
-<DropdownMenu.Root
-	bind:open={show}
-	onOpenChange={(state) => {
-		dispatch('change', state);
+<svelte:window
+	on:keydown={(e) => {
+		if (e.key === 'Shift') shiftKey = true;
 	}}
->
-	<DropdownMenu.Trigger>
-		<slot />
-	</DropdownMenu.Trigger>
+	on:keyup={(e) => {
+		if (e.key === 'Shift') shiftKey = false;
+	}}
+/>
 
-	<slot name="content">
-		<DropdownMenu.Content
-			class="w-full {className} text-sm rounded-xl px-1 py-1.5 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg font-primary"
-			sideOffset={8}
-			side="bottom"
-			align="start"
-			transition={(e) => fade(e, { duration: 100 })}
+<ShortcutsModal bind:show={$showShortcuts} />
+<UserStatusModal
+	bind:show={showUserStatusModal}
+	onSave={async () => {
+		user.set(await getSessionUser(localStorage.token));
+	}}
+/>
+
+<Dropdown bind:show onOpenChange={handleDropdownChange} {align}>
+	<slot />
+
+	<div slot="content">
+		<div
+			class="{className} rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg text-sm"
 		>
+			{#if profile}
+				<div class=" flex gap-3.5 w-full p-2.5 items-center">
+					<div class=" items-center flex shrink-0">
+						<img
+							src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+							class=" size-10 object-cover rounded-full"
+							alt="profile"
+						/>
+					</div>
+
+					<div class=" flex flex-col w-full flex-1">
+						<div class="font-medium line-clamp-1 pr-2">
+							{$user.name}
+						</div>
+
+						<div class=" flex items-center gap-2">
+							{#if $user?.is_active ?? true}
+								<div>
+									<span class="relative flex size-2">
+										<span class="relative inline-flex rounded-full size-2 bg-green-500" />
+									</span>
+								</div>
+
+								<span class="text-xs"> {$i18n.t('Active')} </span>
+							{:else}
+								<div>
+									<span class="relative flex size-2">
+										<span class="relative inline-flex rounded-full size-2 bg-gray-500" />
+									</span>
+								</div>
+
+								<span class="text-xs"> {$i18n.t('Away')} </span>
+							{/if}
+						</div>
+					</div>
+				</div>
+
+				{#if $user?.status_emoji || $user?.status_message}
+					<div class="mx-1">
+						<button
+							class="mb-1 w-full gap-2 px-2.5 py-1.5 rounded-xl bg-gray-50 dark:text-white dark:bg-gray-900/50 text-black transition text-xs flex items-center"
+							type="button"
+							on:click={() => {
+								show = false;
+								showUserStatusModal = true;
+							}}
+						>
+							{#if $user?.status_emoji}
+								<div class=" self-center shrink-0">
+									<Emoji className="size-4" shortCode={$user?.status_emoji} />
+								</div>
+							{/if}
+
+							<Tooltip
+								content={$user?.status_message}
+								className=" self-center line-clamp-2 flex-1 text-left"
+							>
+								{$user?.status_message}
+							</Tooltip>
+
+							<div class="self-start">
+								<Tooltip content={$i18n.t('Clear status')}>
+									<button
+										type="button"
+										on:click={async (e) => {
+											e.preventDefault();
+											e.stopPropagation();
+											e.stopImmediatePropagation();
+
+											const res = await updateUserStatus(localStorage.token, {
+												status_emoji: '',
+												status_message: ''
+											});
+
+											if (res) {
+												toast.success($i18n.t('Status cleared successfully'));
+												user.set(await getSessionUser(localStorage.token));
+											} else {
+												toast.error($i18n.t('Failed to clear status'));
+											}
+										}}
+									>
+										<XMark className="size-4 opacity-50" strokeWidth="2" />
+									</button>
+								</Tooltip>
+							</div>
+						</button>
+					</div>
+				{:else}
+					<div class="mx-1">
+						<button
+							class="mb-1 w-full px-3 py-1.5 gap-1 rounded-xl bg-gray-50 dark:text-white dark:bg-gray-900/50 text-black transition text-xs flex items-center justify-center"
+							type="button"
+							on:click={() => {
+								show = false;
+								showUserStatusModal = true;
+							}}
+						>
+							<div class=" self-center">
+								<FaceSmile className="size-4" strokeWidth="1.5" />
+							</div>
+							<div class=" self-center truncate">{$i18n.t('Update your status')}</div>
+						</button>
+					</div>
+				{/if}
+
+				<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1.5 p-0" />
+			{/if}
+
 			<button
-				class="flex rounded-md py-2 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+				type="button"
 				on:click={async () => {
-					await showSettings.set(true);
 					show = false;
 
+					await showSettings.set(true);
+
 					if ($mobile) {
+						await tick();
 						showSidebar.set(false);
 					}
 				}}
 			>
 				<div class=" self-center mr-3">
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke-width="1.5"
-						stroke="currentColor"
-						class="w-5 h-5"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
-						/>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-						/>
-					</svg>
+					<Settings className="w-5 h-5" strokeWidth="1.5" />
 				</div>
 				<div class=" self-center truncate">{$i18n.t('Settings')}</div>
 			</button>
 
+			{#if role === 'admin'}
+				<a
+					href="/admin"
+					draggable="false"
+					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+					on:click={async (e) => {
+						if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) {
+							return;
+						}
+						e.preventDefault();
+						show = false;
+						goto('/admin');
+						if ($mobile) {
+							await tick();
+							showSidebar.set(false);
+						}
+					}}
+				>
+					<div class=" self-center mr-3">
+						<UserGroup className="w-5 h-5" strokeWidth="1.5" />
+					</div>
+					<div class=" self-center truncate">{$i18n.t('Admin Panel')}</div>
+				</a>
+			{/if}
+
 			<button
-				class="flex rounded-md py-2 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-				on:click={() => {
-					dispatch('show', 'archived-chat');
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+				type="button"
+				on:click={async () => {
 					show = false;
 
+					dispatch('show', 'archived-chat');
+
 					if ($mobile) {
+						await tick();
+
 						showSidebar.set(false);
 					}
 				}}
@@ -89,134 +299,379 @@
 				<div class=" self-center truncate">{$i18n.t('Archived Chats')}</div>
 			</button>
 
-			{#if role === 'admin'}
-				<a
-					class="flex rounded-md py-2 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-					href="/playground"
-					on:click={() => {
-						show = false;
+			<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
 
-						if ($mobile) {
-							showSidebar.set(false);
-						}
-					}}
-				>
-					<div class=" self-center mr-3">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke-width="1.5"
-							stroke="currentColor"
-							class="size-5"
+			{#if $user?.role === 'admin' || $user?.permissions?.workspace?.models || $user?.permissions?.workspace?.knowledge || $user?.permissions?.workspace?.prompts || $user?.permissions?.workspace?.tools}
+				<div class="flex items-center w-full">
+					<a
+						href="/workspace"
+						draggable="false"
+						class="flex flex-1 rounded-xl py-1.5 px-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						on:click={async (e) => {
+							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+							e.preventDefault();
+							show = false;
+							goto('/workspace');
+							if ($mobile) {
+								await tick();
+								showSidebar.set(false);
+							}
+						}}
+					>
+						<div class="self-center mr-3">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="size-5"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z"
+								/>
+							</svg>
+						</div>
+						<div class="self-center truncate">{$i18n.t('Workspace')}</div>
+					</a>
+					{#if shiftKey}
+						<Tooltip
+							content={isPinned('workspace')
+								? $i18n.t('Unpin from Sidebar')
+								: $i18n.t('Pin to Sidebar')}
 						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								d="M14.25 9.75 16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center truncate">{$i18n.t('Playground')}</div>
-				</a>
-
-				<a
-					class="flex rounded-md py-2 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-					href="/admin"
-					on:click={() => {
-						show = false;
-
-						if ($mobile) {
-							showSidebar.set(false);
-						}
-					}}
-				>
-					<div class=" self-center mr-3">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke-width="1.5"
-							stroke="currentColor"
-							class="w-5 h-5"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center truncate">{$i18n.t('Admin Panel')}</div>
-				</a>
+							<button
+								type="button"
+								class="p-1 mr-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+								on:click|preventDefault|stopPropagation={() => togglePin('workspace')}
+							>
+								{#if isPinned('workspace')}
+									<PinSlash className="size-3.5" strokeWidth="1.5" />
+								{:else}
+									<Pin className="size-3.5" strokeWidth="1.5" />
+								{/if}
+							</button>
+						</Tooltip>
+					{/if}
+				</div>
 			{/if}
 
-			<hr class=" border-gray-50 dark:border-gray-850 my-1 p-0" />
+			{#if ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))}
+				<div class="flex items-center w-full">
+					<a
+						href="/notes"
+						draggable="false"
+						class="flex flex-1 rounded-xl py-1.5 px-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						on:click={async (e) => {
+							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+							e.preventDefault();
+							show = false;
+							goto('/notes');
+							if ($mobile) {
+								await tick();
+								showSidebar.set(false);
+							}
+						}}
+					>
+						<div class="self-center mr-3">
+							<Note className="size-5" strokeWidth="1.5" />
+						</div>
+						<div class="self-center truncate">{$i18n.t('Notes')}</div>
+					</a>
+					{#if shiftKey}
+						<Tooltip
+							content={isPinned('notes')
+								? $i18n.t('Unpin from Sidebar')
+								: $i18n.t('Pin to Sidebar')}
+						>
+							<button
+								type="button"
+								class="p-1 mr-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+								on:click|preventDefault|stopPropagation={() => togglePin('notes')}
+							>
+								{#if isPinned('notes')}
+									<PinSlash className="size-3.5" strokeWidth="1.5" />
+								{:else}
+									<Pin className="size-3.5" strokeWidth="1.5" />
+								{/if}
+							</button>
+						</Tooltip>
+					{/if}
+				</div>
+			{/if}
+
+			{#if $config?.features?.enable_calendar && ($user?.role === 'admin' || $user?.permissions?.features?.calendar)}
+				<div class="flex items-center w-full">
+					<a
+						href="/calendar"
+						draggable="false"
+						class="flex flex-1 rounded-xl py-1.5 px-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						on:click={async (e) => {
+							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+							e.preventDefault();
+							show = false;
+							goto('/calendar');
+						}}
+					>
+						<div class="self-center mr-3">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="size-5"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"
+								/>
+							</svg>
+						</div>
+						<div class="self-center truncate">{$i18n.t('Calendar')}</div>
+					</a>
+					{#if shiftKey}
+						<Tooltip
+							content={isPinned('calendar')
+								? $i18n.t('Unpin from Sidebar')
+								: $i18n.t('Pin to Sidebar')}
+						>
+							<button
+								type="button"
+								class="p-1 mr-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+								on:click|preventDefault|stopPropagation={() => togglePin('calendar')}
+							>
+								{#if isPinned('calendar')}
+									<PinSlash className="size-3.5" strokeWidth="1.5" />
+								{:else}
+									<Pin className="size-3.5" strokeWidth="1.5" />
+								{/if}
+							</button>
+						</Tooltip>
+					{/if}
+				</div>
+			{/if}
+
+			{#if $config?.features?.enable_automations && ($user?.role === 'admin' || $user?.permissions?.features?.automations)}
+				<div class="flex items-center w-full">
+					<a
+						href="/automations"
+						draggable="false"
+						class="flex flex-1 rounded-xl py-1.5 px-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						on:click={async (e) => {
+							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+							e.preventDefault();
+							show = false;
+							goto('/automations');
+							if ($mobile) {
+								await tick();
+								showSidebar.set(false);
+							}
+						}}
+					>
+						<div class="self-center mr-3">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="size-5"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+								/>
+							</svg>
+						</div>
+						<div class="self-center truncate">{$i18n.t('Automations')}</div>
+					</a>
+					{#if shiftKey}
+						<Tooltip
+							content={isPinned('automations')
+								? $i18n.t('Unpin from Sidebar')
+								: $i18n.t('Pin to Sidebar')}
+						>
+							<button
+								type="button"
+								class="p-1 mr-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+								on:click|preventDefault|stopPropagation={() => togglePin('automations')}
+							>
+								{#if isPinned('automations')}
+									<PinSlash className="size-3.5" strokeWidth="1.5" />
+								{:else}
+									<Pin className="size-3.5" strokeWidth="1.5" />
+								{/if}
+							</button>
+						</Tooltip>
+					{/if}
+				</div>
+			{/if}
+
+			{#if role === 'admin'}
+				<div class="flex items-center w-full">
+					<a
+						href="/playground"
+						draggable="false"
+						class="flex flex-1 rounded-xl py-1.5 px-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						on:click={async (e) => {
+							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+							e.preventDefault();
+							show = false;
+							goto('/playground');
+							if ($mobile) {
+								await tick();
+								showSidebar.set(false);
+							}
+						}}
+					>
+						<div class="self-center mr-3">
+							<Code className="size-5" strokeWidth="1.5" />
+						</div>
+						<div class="self-center truncate">{$i18n.t('Playground')}</div>
+					</a>
+					{#if shiftKey}
+						<Tooltip
+							content={isPinned('playground')
+								? $i18n.t('Unpin from Sidebar')
+								: $i18n.t('Pin to Sidebar')}
+						>
+							<button
+								type="button"
+								class="p-1 mr-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+								on:click|preventDefault|stopPropagation={() => togglePin('playground')}
+							>
+								{#if isPinned('playground')}
+									<PinSlash className="size-3.5" strokeWidth="1.5" />
+								{:else}
+									<Pin className="size-3.5" strokeWidth="1.5" />
+								{/if}
+							</button>
+						</Tooltip>
+					{/if}
+				</div>
+			{/if}
+
+			{#if help}
+				<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
+
+				<!-- {$i18n.t('Help')} -->
+
+				{#if $user?.role === 'admin'}
+					<a
+						href="https://docs.openwebui.com"
+						target="_blank"
+						draggable="false"
+						class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						id="chat-share-button"
+						on:click={() => {
+							show = false;
+						}}
+					>
+						<div class=" self-center mr-3">
+							<QuestionMarkCircle className="size-5" />
+						</div>
+						<div class=" self-center truncate">{$i18n.t('Documentation')}</div>
+					</a>
+
+					<!-- Releases -->
+					<a
+						href="https://github.com/open-webui/open-webui/releases"
+						target="_blank"
+						draggable="false"
+						class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+						id="chat-share-button"
+						on:click={() => {
+							show = false;
+						}}
+					>
+						<div class=" self-center mr-3">
+							<Map className="size-5" />
+						</div>
+						<div class=" self-center truncate">{$i18n.t('Releases')}</div>
+					</a>
+				{/if}
+
+				<button
+					class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+					type="button"
+					id="chat-share-button"
+					on:click={async () => {
+						show = false;
+						showShortcuts.set(!$showShortcuts);
+
+						if ($mobile) {
+							await tick();
+							showSidebar.set(false);
+						}
+					}}
+				>
+					<div class=" self-center mr-3">
+						<Keyboard className="size-5" />
+					</div>
+					<div class=" self-center truncate">{$i18n.t('Keyboard shortcuts')}</div>
+				</button>
+			{/if}
+
+			<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
 
 			<button
-				class="flex rounded-md py-2 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+				class="flex rounded-xl py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition cursor-pointer select-none"
+				type="button"
 				on:click={async () => {
-					await userSignOut();
+					const res = await userSignOut();
+					user.set(null);
 					localStorage.removeItem('token');
-					location.href = '/auth';
+
+					location.href = res?.redirect_url ?? '/auth';
 					show = false;
 				}}
 			>
 				<div class=" self-center mr-3">
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						viewBox="0 0 20 20"
-						fill="currentColor"
-						class="w-5 h-5"
-					>
-						<path
-							fill-rule="evenodd"
-							d="M3 4.25A2.25 2.25 0 015.25 2h5.5A2.25 2.25 0 0113 4.25v2a.75.75 0 01-1.5 0v-2a.75.75 0 00-.75-.75h-5.5a.75.75 0 00-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 00.75-.75v-2a.75.75 0 011.5 0v2A2.25 2.25 0 0110.75 18h-5.5A2.25 2.25 0 013 15.75V4.25z"
-							clip-rule="evenodd"
-						/>
-						<path
-							fill-rule="evenodd"
-							d="M6 10a.75.75 0 01.75-.75h9.546l-1.048-.943a.75.75 0 111.004-1.114l2.5 2.25a.75.75 0 010 1.114l-2.5 2.25a.75.75 0 11-1.004-1.114l1.048-.943H6.75A.75.75 0 016 10z"
-							clip-rule="evenodd"
-						/>
-					</svg>
+					<SignOut className="w-5 h-5" strokeWidth="1.5" />
 				</div>
 				<div class=" self-center truncate">{$i18n.t('Sign Out')}</div>
 			</button>
 
-			{#if $activeUserIds?.length > 0}
-				<hr class=" border-gray-50 dark:border-gray-850 my-1 p-0" />
+			{#if showActiveUsers && ($config?.features?.enable_public_active_users_count || role === 'admin') && usage}
+				{#if usage?.user_count}
+					<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
 
-				<Tooltip
-					content={$USAGE_POOL && $USAGE_POOL.length > 0
-						? `${$i18n.t('Running')}: ${$USAGE_POOL.join(', ')} ✨`
-						: ''}
-				>
-					<div class="flex rounded-md py-1.5 px-3 text-xs gap-2.5 items-center">
-						<div class=" flex items-center">
-							<span class="relative flex size-2">
-								<span
-									class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
-								/>
-								<span class="relative inline-flex rounded-full size-2 bg-green-500" />
-							</span>
-						</div>
+					<Tooltip
+						content={usage?.model_ids && usage?.model_ids.length > 0
+							? `${$i18n.t('Running')}: ${usage.model_ids.join(', ')} ✨`
+							: ''}
+					>
+						<div
+							class="flex rounded-xl py-1 px-3 text-xs gap-2.5 items-center"
+							on:mouseenter={() => {
+								if ($config?.features?.enable_public_active_users_count || role === 'admin') {
+									getUsageInfo();
+								}
+							}}
+						>
+							<div class=" flex items-center">
+								<span class="relative flex size-2">
+									<span class="relative inline-flex rounded-full size-2 bg-green-500" />
+								</span>
+							</div>
 
-						<div class=" ">
-							<span class="">
-								{$i18n.t('Active Users')}:
-							</span>
-							<span class=" font-semibold">
-								{$activeUserIds?.length}
-							</span>
+							<div class=" ">
+								<span class="">
+									{$i18n.t('Active Users')}:
+								</span>
+								<span class=" font-semibold">
+									{usage?.user_count}
+								</span>
+							</div>
 						</div>
-					</div>
-				</Tooltip>
+					</Tooltip>
+				{/if}
 			{/if}
-
-			<!-- <DropdownMenu.Item class="flex items-center px-3 py-2 text-sm ">
-				<div class="flex items-center">Profile</div>
-			</DropdownMenu.Item> -->
-		</DropdownMenu.Content>
-	</slot>
-</DropdownMenu.Root>
+		</div>
+	</div>
+</Dropdown>

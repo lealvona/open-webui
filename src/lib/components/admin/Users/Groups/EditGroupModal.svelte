@@ -3,12 +3,17 @@
 	import { getContext, onMount } from 'svelte';
 	const i18n = getContext('i18n');
 
+	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
-	import Display from './Display.svelte';
+	import General from './General.svelte';
 	import Permissions from './Permissions.svelte';
 	import Users from './Users.svelte';
+	import GroupPreviewPanel from './GroupPreviewPanel.svelte';
+	import { DEFAULT_PERMISSIONS } from '$lib/constants/permissions';
 	import UserPlusSolid from '$lib/components/icons/UserPlusSolid.svelte';
 	import WrenchSolid from '$lib/components/icons/WrenchSolid.svelte';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import XMark from '$lib/components/icons/XMark.svelte';
 
 	export let onSubmit: Function = () => {};
 	export let onDelete: Function = () => {};
@@ -16,8 +21,8 @@
 	export let show = false;
 	export let edit = false;
 
-	export let users = [];
 	export let group = null;
+	export let defaultPermissions = {};
 
 	export let custom = true;
 
@@ -25,31 +30,15 @@
 
 	let selectedTab = 'general';
 	let loading = false;
+	let showDeleteConfirmDialog = false;
+
+	let userCount = 0;
 
 	export let name = '';
 	export let description = '';
+	export let data = {};
 
-	export let permissions = {
-		workspace: {
-			models: false,
-			knowledge: false,
-			prompts: false,
-			tools: false
-		},
-		chat: {
-			controls: true,
-			file_upload: true,
-			delete: true,
-			edit: true,
-			temporary: true
-		},
-		features: {
-			web_search: true,
-			image_generation: true,
-			code_interpreter: true
-		}
-	};
-	export let userIds = [];
+	export let permissions = DEFAULT_PERMISSIONS;
 
 	const submitHandler = async () => {
 		loading = true;
@@ -57,8 +46,8 @@
 		const group = {
 			name,
 			description,
-			permissions,
-			user_ids: userIds
+			data,
+			permissions
 		};
 
 		await onSubmit(group);
@@ -71,9 +60,19 @@
 		if (group) {
 			name = group.name;
 			description = group.description;
-			permissions = group?.permissions ?? {};
+			const loadedPermissions = group?.permissions ?? {};
+			// Create fresh object from defaults, then overlay loaded values
+			permissions = {
+				workspace: { ...DEFAULT_PERMISSIONS.workspace, ...loadedPermissions.workspace },
+				sharing: { ...DEFAULT_PERMISSIONS.sharing, ...loadedPermissions.sharing },
+				access_grants: { ...DEFAULT_PERMISSIONS.access_grants, ...loadedPermissions.access_grants },
+				chat: { ...DEFAULT_PERMISSIONS.chat, ...loadedPermissions.chat },
+				features: { ...DEFAULT_PERMISSIONS.features, ...loadedPermissions.features },
+				settings: { ...DEFAULT_PERMISSIONS.settings, ...loadedPermissions.settings }
+			};
+			data = group?.data ?? {};
 
-			userIds = group?.user_ids ?? [];
+			userCount = group?.member_count ?? 0;
 		}
 	};
 
@@ -82,13 +81,20 @@
 	}
 
 	onMount(() => {
-		console.log(tabs);
 		selectedTab = tabs[0];
 		init();
 	});
 </script>
 
-<Modal size="md" bind:show>
+<ConfirmDialog
+	bind:show={showDeleteConfirmDialog}
+	on:confirm={() => {
+		onDelete();
+		show = false;
+	}}
+/>
+
+<Modal size="lg" bind:show>
 	<div>
 		<div class=" flex justify-between dark:text-gray-100 px-5 pt-4 mb-1.5">
 			<div class=" text-lg font-medium self-center font-primary">
@@ -108,16 +114,7 @@
 					show = false;
 				}}
 			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 20 20"
-					fill="currentColor"
-					class="w-5 h-5"
-				>
-					<path
-						d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-					/>
-				</svg>
+				<XMark className={'size-5'} />
 			</button>
 		</div>
 
@@ -196,20 +193,80 @@
 									<div class=" self-center mr-2">
 										<UserPlusSolid />
 									</div>
-									<div class=" self-center">{$i18n.t('Users')} ({userIds.length})</div>
+									<div class=" self-center">{$i18n.t('Users')}</div>
+								</button>
+							{/if}
+
+							{#if tabs.includes('preview')}
+								<button
+									class="px-0.5 py-1 max-w-fit w-fit rounded-lg flex-1 lg:flex-none flex text-right transition {selectedTab ===
+									'preview'
+										? ''
+										: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
+									on:click={() => {
+										selectedTab = 'preview';
+									}}
+									type="button"
+								>
+									<div class=" self-center mr-2">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+											<path
+												fill-rule="evenodd"
+												d="M1.38 8.28a.87.87 0 0 1 0-.566 7.003 7.003 0 0 1 13.238.006.87.87 0 0 1 0 .566A7.003 7.003 0 0 1 1.379 8.28ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</div>
+									<div class=" self-center">{$i18n.t('Preview')}</div>
 								</button>
 							{/if}
 						</div>
 
-						<div
-							class="flex-1 mt-1 lg:mt-1 lg:h-[22rem] lg:max-h-[22rem] overflow-y-auto scrollbar-hidden"
-						>
-							{#if selectedTab == 'general'}
-								<Display bind:name bind:description />
-							{:else if selectedTab == 'permissions'}
-								<Permissions bind:permissions />
-							{:else if selectedTab == 'users'}
-								<Users bind:userIds {users} />
+						<div class="flex-1 mt-1 lg:mt-1 lg:h-[30rem] lg:max-h-[30rem] flex flex-col">
+							<div class="w-full h-full overflow-y-auto scrollbar-hidden">
+								{#if selectedTab == 'general'}
+									<General
+										bind:name
+										bind:description
+										bind:data
+										{edit}
+										onDelete={() => {
+											showDeleteConfirmDialog = true;
+										}}
+									/>
+								{:else if selectedTab == 'permissions'}
+									<Permissions bind:permissions {defaultPermissions} />
+								{:else if selectedTab == 'users'}
+									<Users bind:userCount groupId={group?.id} />
+								{:else if selectedTab == 'preview'}
+									<GroupPreviewPanel groupId={group?.id} />
+								{/if}
+							</div>
+
+							{#if ['general', 'permissions'].includes(selectedTab)}
+								<div class="flex justify-end pt-3 text-sm font-medium gap-1.5">
+									<button
+										class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 whitespace-nowrap {loading
+											? ' cursor-not-allowed'
+											: ''}"
+										type="submit"
+										disabled={loading}
+									>
+										{$i18n.t('Save')}
+
+										{#if loading}
+											<span class="shrink-0">
+												<Spinner />
+											</span>
+										{/if}
+									</button>
+								</div>
 							{/if}
 						</div>
 					</div>
@@ -262,59 +319,6 @@
 							</button>
 						{/if}
 					</div> -->
-
-					<div class="flex justify-end pt-3 text-sm font-medium gap-1.5">
-						{#if edit}
-							<button
-								class="px-3.5 py-1.5 text-sm font-medium dark:bg-black dark:hover:bg-gray-900 dark:text-white bg-white text-black hover:bg-gray-100 transition rounded-full flex flex-row space-x-1 items-center"
-								type="button"
-								on:click={() => {
-									onDelete();
-									show = false;
-								}}
-							>
-								{$i18n.t('Delete')}
-							</button>
-						{/if}
-
-						<button
-							class="px-3.5 py-1.5 text-sm font-medium bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex flex-row space-x-1 items-center {loading
-								? ' cursor-not-allowed'
-								: ''}"
-							type="submit"
-							disabled={loading}
-						>
-							{$i18n.t('Save')}
-
-							{#if loading}
-								<div class="ml-2 self-center">
-									<svg
-										class=" w-4 h-4"
-										viewBox="0 0 24 24"
-										fill="currentColor"
-										xmlns="http://www.w3.org/2000/svg"
-										><style>
-											.spinner_ajPY {
-												transform-origin: center;
-												animation: spinner_AtaB 0.75s infinite linear;
-											}
-											@keyframes spinner_AtaB {
-												100% {
-													transform: rotate(360deg);
-												}
-											}
-										</style><path
-											d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z"
-											opacity=".25"
-										/><path
-											d="M10.14,1.16a11,11,0,0,0-9,8.92A1.59,1.59,0,0,0,2.46,12,1.52,1.52,0,0,0,4.11,10.7a8,8,0,0,1,6.66-6.61A1.42,1.42,0,0,0,12,2.69h0A1.57,1.57,0,0,0,10.14,1.16Z"
-											class="spinner_ajPY"
-										/></svg
-									>
-								</div>
-							{/if}
-						</button>
-					</div>
 				</form>
 			</div>
 		</div>
