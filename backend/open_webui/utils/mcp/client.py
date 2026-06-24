@@ -1,9 +1,21 @@
 import asyncio
 import logging
+import re
 from contextlib import AsyncExitStack
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+# Deterministic guard: filesystem MCP calls must not carry absolute system paths.
+# Matches the same patterns as FilesystemPathGuardMiddleware in mcpo.
+_FS_BLOCKED = re.compile(
+    r'^(?:/etc/|/home/|/root/|/var/|/usr/|/tmp/|/opt/|/proc/|/sys/|/dev/|/run/'
+    r'|~/'
+    r'|\.\./'
+    r'|\.\.\\)'
+)
+_FS_PATH_ARGS = frozenset({'path', 'paths', 'source', 'destination'})
+_FS_SERVERS = frozenset({'filesystem'})
 
 import anyio
 import httpx
@@ -55,8 +67,11 @@ class MCPClient:
     def __init__(self):
         self.session: Optional[ClientSession] = None
         self.exit_stack = None
+        self._server_name: str = ''
 
     async def connect(self, url: str, headers: Optional[dict] = None):
+        # Capture the server name from the URL path (last non-empty segment)
+        self._server_name = url.rstrip('/').rsplit('/', 1)[-1]
         async with AsyncExitStack() as exit_stack:
             try:
                 self._streams_context = streamablehttp_client(
@@ -104,6 +119,24 @@ class MCPClient:
     async def call_tool(self, function_name: str, function_args: dict) -> Optional[dict]:
         if not self.session:
             raise RuntimeError('MCP client is not connected.')
+
+        # Defense-in-depth: reject absolute system paths for filesystem server calls
+        # (primary gate is FilesystemPathGuardMiddleware in mcpo)
+        if self._server_name in _FS_SERVERS:
+            for arg_name, val in function_args.items():
+                if arg_name not in _FS_PATH_ARGS:
+                    continue
+                values = val if isinstance(val, list) else [val]
+                for v in values:
+                    if isinstance(v, str) and _FS_BLOCKED.match(v):
+                        log.warning(
+                            'MCPClient path guard: blocked %r in %s(%s=...)',
+                            v, function_name, arg_name,
+                        )
+                        raise ValueError(
+                            f'Absolute system paths are not accessible via the MCP filesystem tool. '
+                            f'Use a relative path within the sandbox (e.g. "mame-tools/notes.md").'
+                        )
 
         result = await self.session.call_tool(function_name, function_args)
         if not result:
